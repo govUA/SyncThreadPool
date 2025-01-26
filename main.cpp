@@ -159,14 +159,16 @@ int main() {
         auto [id, future] = pool.addTask(simulateTask, i);
         taskIds.push_back(id);
         results.push_back(std::move(future));
+        std::cout << "Pausing the thread pool for 2 seconds...\n";
+        pool.pause();
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::cout << "Resuming the thread pool.\n";
+        pool.resume();
     }
 
-    std::cout << "Pausing the thread pool for 5 seconds...\n";
-    pool.pause();
-    std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    std::cout << "Resuming the thread pool.\n";
-    pool.resume();
+
+
 
     for (auto &result: results) {
         result.get();
