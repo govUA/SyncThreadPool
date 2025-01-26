@@ -25,6 +25,11 @@ public:
 
     void waitAndStop();
 
+    std::atomic<size_t> totalWaitingTime{0};
+    std::atomic<size_t> totalTasksExecuted{0};
+    std::atomic<size_t> totalTaskQueueLength{0};
+    std::atomic<size_t> queueSamples{0};
+
 private:
     void workerThread();
 
@@ -73,7 +78,7 @@ void ThreadPool::resume() {
 void ThreadPool::waitAndStop() {
     {
         std::unique_lock<std::mutex> lock(queueMutex);
-        condition.wait(lock, [this] { return stopFlag || (!pauseFlag && !taskQueue.empty()); });
+        condition.wait(lock, [this] { return taskQueue.empty(); });
     }
     stop();
 }
@@ -96,7 +101,13 @@ auto ThreadPool::addTask(Func &&func,
         if (stopFlag) {
             throw std::runtime_error("ThreadPool is stopping, cannot add new tasks.");
         }
-        taskQueue.emplace([task]() { (*task)(); });
+        taskQueue.emplace([this, task]() {
+            auto start = std::chrono::steady_clock::now();
+            (*task)();
+            auto end = std::chrono::steady_clock::now();
+            totalTasksExecuted++;
+            totalWaitingTime += std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        });
     }
     condition.notify_one();
     return {taskId, std::move(result)};
@@ -107,11 +118,17 @@ void ThreadPool::workerThread() {
         Task task;
         {
             std::unique_lock<std::mutex> lock(queueMutex);
+            totalTaskQueueLength += taskQueue.size();
+            queueSamples++;
             condition.wait(lock, [this] { return stopFlag || !taskQueue.empty(); });
             if (stopFlag && taskQueue.empty()) return;
 
             task = std::move(taskQueue.front());
             taskQueue.pop();
+
+            if (taskQueue.empty()) {
+                condition.notify_all();
+            }
         }
         task();
     }
@@ -135,6 +152,7 @@ int main() {
     std::vector<std::future<void>> results;
     std::vector<int> taskIds;
 
+    auto startTime = std::chrono::steady_clock::now();
     for (int i = 1; i <= numTasks; ++i) {
         auto [id, future] = pool.addTask(simulateTask, i);
         taskIds.push_back(id);
@@ -145,8 +163,16 @@ int main() {
         result.get();
     }
 
+    auto endTime = std::chrono::steady_clock::now();
     pool.waitAndStop();
 
-    std::cout << "All tasks completed. Thread pool stopped.\n";
+    auto totalTime = std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime).count();
+    size_t avgQueueLength = pool.queueSamples ? pool.totalTaskQueueLength / pool.queueSamples : 0;
+    size_t avgTaskExecutionTime = pool.totalTasksExecuted ? pool.totalWaitingTime / pool.totalTasksExecuted : 0;
+
+    std::cout << "Total time: " << totalTime << " seconds\n";
+    std::cout << "Average queue length: " << avgQueueLength << "\n";
+    std::cout << "Average task execution time: " << avgTaskExecutionTime << " milliseconds\n";
+    std::cout << "Total tasks executed: " << pool.totalTasksExecuted << "\n";
     return 0;
 }
