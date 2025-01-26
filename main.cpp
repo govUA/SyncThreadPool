@@ -20,6 +20,8 @@ public:
                  Args &&... args) -> std::pair<int, std::future<typename std::invoke_result<Func, Args...>::type>>;
 
     void stop();
+    void pause();
+    void resume();
 
     void waitAndStop();
 
@@ -33,6 +35,7 @@ private:
     std::mutex queueMutex;
     std::condition_variable condition;
     std::atomic<bool> stopFlag = false;
+    std::atomic<bool> pauseFlag = false;
 
     std::atomic<int> taskIdCounter = 0;
     std::unordered_map<int, std::future<void>> taskResults;
@@ -58,10 +61,19 @@ void ThreadPool::stop() {
     }
 }
 
+void ThreadPool::pause() {
+    pauseFlag = true;
+}
+
+void ThreadPool::resume() {
+    pauseFlag = false;
+    condition.notify_all();
+}
+
 void ThreadPool::waitAndStop() {
     {
         std::unique_lock<std::mutex> lock(queueMutex);
-        condition.wait(lock, [this] { return taskQueue.empty(); });
+        condition.wait(lock, [this] { return stopFlag || (!pauseFlag && !taskQueue.empty()); });
     }
     stop();
 }
