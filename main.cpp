@@ -120,8 +120,10 @@ void ThreadPool::workerThread() {
             std::unique_lock<std::mutex> lock(queueMutex);
             totalTaskQueueLength += taskQueue.size();
             queueSamples++;
-            condition.wait(lock, [this] { return stopFlag || !taskQueue.empty(); });
+
+            condition.wait(lock, [this] { return stopFlag || (!pauseFlag && !taskQueue.empty()); });
             if (stopFlag && taskQueue.empty()) return;
+            if (pauseFlag) continue;
 
             task = std::move(taskQueue.front());
             taskQueue.pop();
@@ -158,6 +160,13 @@ int main() {
         taskIds.push_back(id);
         results.push_back(std::move(future));
     }
+
+    std::cout << "Pausing the thread pool for 5 seconds...\n";
+    pool.pause();
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    std::cout << "Resuming the thread pool.\n";
+    pool.resume();
 
     for (auto &result: results) {
         result.get();
